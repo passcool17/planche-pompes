@@ -1,12 +1,21 @@
 import './style.css';
 import { boardSVG, COLORS, ORDER, LINES } from './board.js';
-import { WEEK, CYCLE_WEEKS, iso, addDays, today, weekTable, streak, makeCycle, defaultBase, step, parse } from './plan.js';
+import { WEEK, CYCLE_WEEKS, iso, today, weekTable, streak, newCycle, rollCycles, step, parse, START, MAX_REPS, levelAt, testCap } from './plan.js';
 import { load, save, DEFAULT, validImport, clear, lbToKg, kgToLb, cmToFtIn, ftInToCm } from './store.js';
 import { WARMUP, TIPS, SAFETY } from './content.js';
 import { unlock, beep, keepAwake } from './fx.js';
 
 let S = load();
 const persist = () => save(S);
+/** Départ à 2 × 10 : un plan créé par l’ancienne version (basé sur le test) repart à 2 × 10 aujourd’hui. L’historique est gardé. */
+function migrate() {
+  let ch = false;
+  if (S.cycle && S.cycle.v !== 2) { S.cycles.push(S.cycle); S.cycle = newCycle(iso()); S.planStart = S.cycle.start; S.migrated2x10 = iso(); ch = true; }
+  if (!S.cycle && S.profileSaved) { S.cycle = newCycle(iso()); S.planStart = S.cycle.start; ch = true; }
+  if (rollCycles(S)) ch = true;
+  if (ch) persist();
+}
+migrate();
 const $ = (q, r = document) => r.querySelector(q);
 const app = $('#app');
 const SPEED = Math.max(1, Number(localStorage.getItem('pp-speed')) || 1); // tests automatisés seulement
@@ -27,6 +36,7 @@ function go(r, focus = true) {
 }
 function render(focus) {
   stopTick();
+  if (rollCycles(S)) persist();
   app.innerHTML = ROUTES[route]();
   document.body.classList.toggle('in-session', route === 'seance');
   const nav = $('#nav');
@@ -58,7 +68,7 @@ function profileForm(compact) {
         : `<input name="ft" type="number" inputmode="numeric" min="3" max="7" value="${ft}" aria-label="Pieds"><span class="unit">pi</span><input name="in" type="number" inputmode="numeric" min="0" max="11" value="${inch}" aria-label="Pouces"><span class="unit">po</span>`}
       <div class="seg" role="radiogroup" aria-label="Unité de taille">${[['ft', 'pi/po'], ['cm', 'cm']].map(([u, l]) => `<label><input type="radio" name="hUnit" value="${u}" ${p.hUnit === u ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>
     </div></fieldset>
-    <p class="note">Les pompes sur la planche sont plus dures qu’au sol : ton plan se base sur ton <strong>test sur la planche</strong>, pas sur ce nombre.</p>
+    <p class="note">Sur la planche, les pompes sont plus dures qu’au sol : ton plan commence à <strong>2 × 10</strong> pour chaque couleur, peu importe ce nombre.</p>
     <button class="btn primary" type="submit">${compact ? 'C’est bon, on continue' : 'Enregistrer le profil'}</button>
   </form>`;
 }
@@ -77,16 +87,9 @@ function readProfile(f) {
 
 function todayCard() {
   const t = today(S);
-  if (t.kind === 'test') return `<section class="card hero" aria-labelledby="t-h">
-    <p class="eyebrow">${t.first ? 'Séance 1' : 'Fin du cycle de 4 semaines'}</p>
-    <h2 id="t-h">Test sur la planche</h2>
-    <p>${t.first ? 'Avant de commencer, on mesure ce que tu fais <strong>sur la planche</strong> : le plus de pompes possible avec une bonne forme, une fois par couleur. Ton plan se base là-dessus.' : 'Bravo pour ces 4 semaines! Refais le test sur la planche pour ajuster ton nouveau plan.'}</p>
-    <ul class="mini">${ORDER.map((c) => `<li>${chip(c)}</li>`).join('')}</ul>
-    <button class="btn primary big" data-act="start-test">Commencer le test</button>
-    ${t.first ? `<button class="btn ghost" data-act="skip-test">Commencer sans test (${2} × ${defaultBase(S.profile)}, prudent)</button>` : ''}
-  </section>`;
-  if (t.kind === 'before') return `<section class="card hero"><p class="eyebrow">Test fait ✓</p><h2>Ton plan commence ${fmtDate(t.start, { weekday: 'long' })}</h2><p>Aujourd’hui, récupère. Demain : ${WEEK[0].map((c) => chip(c)).join(' ')}</p><a class="btn" href="#plan">Voir mon plan</a></section>`;
-  const head = `<p class="eyebrow">Semaine ${t.week} sur ${CYCLE_WEEKS} · ${DAYS[t.day - 1]}</p>`;
+  if (t.kind === 'none') return '';
+  if (t.kind === 'before') return `<section class="card hero"><h2>Ton plan commence ${fmtDate(t.start, { weekday: 'long' })}</h2><p>Premier jour : ${WEEK[0].map((c) => chip(c)).join(' ')}, 2 × 10.</p><a class="btn" href="#plan">Voir mon plan</a></section>`;
+  const head = `${S.migrated2x10 === iso() ? '<p class="badge">Nouveau : ton plan repart à 2 × 10. Ton historique est gardé.</p>' : ''}<p class="eyebrow">Semaine ${t.week} sur ${CYCLE_WEEKS} · ${DAYS[t.day - 1]}</p>`;
   if (t.kind === 'rest') {
     const nxt = WEEK.slice(t.day).findIndex(Boolean);
     return `<section class="card hero">${head}<h2>Jour de repos</h2><p>Tes muscles se renforcent pendant le repos. Une marche ou quelques étirements, c’est parfait.</p>${nxt >= 0 ? `<p>Prochaine séance : ${WEEK[t.day + nxt].map((c) => chip(c)).join(' ')}</p>` : ''}</section>`;
@@ -99,13 +102,21 @@ function todayCard() {
     <p class="note">Échauffement guidé inclus (environ 3 min).</p>
     <button class="btn primary big" data-act="start-plan">Commencer la séance</button></section>`;
 }
+function testCard() {
+  const last = S.tests.at(-1), cy = S.cycle;
+  const due = last && cy && cy.n > 1 && last.date < cy.start && today(S).week === 1;
+  if (last && !due) return '';
+  return `<section class="card"><h2>Test sur la planche <small class="opt">optionnel</small></h2>
+    <p>${due ? 'Nouveau cycle : bon moment pour refaire le test.' : 'Quand tu veux, mesure ton max sur la planche, une fois par couleur.'} Ton plan reste à son niveau : le test sert seulement à garder une progression prudente.</p>
+    <button class="btn" data-act="start-test">Faire le test</button></section>`;
+}
 function home() {
   const n = S.sessions.filter((s) => s.type === 'plan' && !s.stopped).length;
   const last = S.tests.at(-1);
   return `<header class="top"><h1 class="brand"><img src="${import.meta.env.BASE_URL}icons/icon-192.png" alt="" width="40" height="40">Planche Pompes</h1></header>
   <div id="install"></div>
   ${S.profileSaved ? '' : `<section class="card intro"><h2 class="lead">Bienvenue!</h2><p>Ton coach pour la planche à pompes 21 en 1 : le programme du feuillet, adapté à toi, avec échauffement, minuteur de repos et suivi.</p></section>${profileForm(true)}`}
-  ${S.profileSaved ? todayCard() : ''}
+  ${S.profileSaved ? todayCard() + testCard() : ''}
   ${S.profileSaved ? `<section class="stats" aria-label="Résumé">
     <div><strong>${streak(S)}</strong><span>séance${streak(S) > 1 ? 's' : ''} d’affilée</span></div>
     <div><strong>${n}</strong><span>séance${n > 1 ? 's' : ''} au total</span></div>
@@ -119,22 +130,25 @@ let planWeek = null, boardSel = { c: 'chest', i: 0 };
 function planScreen() {
   const cy = S.cycle, t = today(S);
   const wk = planWeek || (t.week && t.week <= CYCLE_WEEKS ? t.week : 1);
-  const rows = weekTable(S, wk).map((d) => `<tr${t.week === wk && t.day === d.day ? ' class="now"' : ''}><th scope="row">${DAYS[d.day - 1]}${d.date ? `<small>${fmtDate(d.date)}</small>` : ''}</th><td>${d.ex ? d.ex.map((e) => `<div class="exl">${chip(e.c)}<span class="tgt">${e.sets} × ${e.reps}</span></div>`).join('') : '<span class="rest">Repos</span>'}</td></tr>`).join('');
+  const cw = t.week || 1, proj = wk > cw;
+  const rows = weekTable(S, wk, cw).map((d) => `<tr${t.week === wk && t.day === d.day ? ' class="now"' : ''}><th scope="row">${DAYS[d.day - 1]}${d.date ? `<small>${fmtDate(d.date)}</small>` : ''}</th><td>${d.ex ? d.ex.map((e) => `<div class="exl">${chip(e.c)}<span class="tgt">${e.sets} × ${e.reps}</span></div>`).join('') : '<span class="rest">Repos</span>'}</td></tr>`).join('');
   const inc = step(S.profile);
   return `<h1>Mon plan</h1>
   <section class="card">
-    <p>${cy ? `Cycle commencé ${fmtDate(cy.start, { day: 'numeric', month: 'long' })}. ${cy.tested ? 'Basé sur ton test sur la planche.' : 'Valeurs prudentes, en attendant ton test sur la planche.'}` : 'Ton plan sera calculé après ton test sur la planche. Voici les valeurs prudentes de départ.'}</p>
+    <p>${cy ? `Cycle ${cy.n || 1}, commencé ${fmtDate(cy.start, { day: 'numeric', month: 'long' })}.` : 'Ton plan commence à 2 × 10 dès que ton profil est enregistré.'} ${!cy || (cy.n || 1) === 1 ? 'Départ : 2 séries de 10 pour chaque couleur.' : ''}</p>
     <div class="tabs" role="group" aria-label="Semaine">${[1, 2, 3, 4].map((w) => `<button class="tab" data-act="week" data-w="${w}" aria-pressed="${w === wk}">Sem. ${w}</button>`).join('')}</div>
     <table class="plan"><caption>Semaine ${wk}${wk === CYCLE_WEEKS ? ' (allégée)' : ''} : séries × répétitions</caption><tbody>${rows}</tbody></table>
-    ${wk > 1 && wk < CYCLE_WEEKS ? '<p class="note">Les semaines à venir s’ajustent selon tes séances.</p>' : ''}
+    ${proj ? '<p class="note">Aperçu si tu réussis tes séances. Ça s’ajuste selon ce que tu fais vraiment.</p>' : ''}
   </section>
   <section class="card"><h2>Comment ça progresse</h2><ul class="list">
-    <li>Départ : environ 55 % de ton max par couleur au test sur la planche, en 3 séries.</li>
+    <li>Départ : 2 × 10 pour chaque couleur.</li>
     <li>Chaque semaine réussie (toutes les séries atteintes, pas « Difficile ») : +${inc} répétition${inc > 1 ? 's' : ''} par série.</li>
-    <li>Semaine 4 : allégée (2 séries, environ 30 % de moins) pour récupérer.</li>
-    <li>Après 4 semaines : nouveau test sur la planche et nouveau plan.</li>
+    <li>Arrivé à 2 × ${MAX_REPS} : on passe à <strong>3 × 10</strong>, puis on remonte de la même façon.</li>
+    <li>Semaine 4 : allégée (2 séries, environ 30 % de moins) pour récupérer. Le cycle suivant repart de ton niveau.</li>
+    <li>Test sur la planche (optionnel) : ta cible ne dépasse pas 75 % de ton max au dernier test. Refais-le pour débloquer la suite.</li>
     <li>Trop dur? Fais moins de répétitions, mais ne lâche pas. Repos de ${S.settings.rest} s entre les séries.</li>
   </ul></section>
+  ${cy ? `<section class="card"><h2>Ton niveau actuel</h2>${ORDER.some((c) => { const l = levelAt(S, cy, cw, c); return l.sets < 3 && l.reps >= testCap(S, c) && l.reps < MAX_REPS; }) ? '<p class="note">« Limite du test » : refais le test sur la planche pour continuer à monter.</p>' : ''}<ul class="mini">${ORDER.map((c) => { const l = levelAt(S, cy, cw, c), capped = l.sets < 3 && l.reps >= testCap(S, c) && l.reps < MAX_REPS; return `<li>${chip(c)}<span class="tgt">${l.sets} × ${l.reps}${capped ? ' <small>(limite du test)</small>' : ''}</span></li>`; }).join('')}</ul></section>` : ''}
   <section class="card"><h2>La planche</h2>
     <p>Mets une poignée dans 2 trous reliés par une ligne de couleur, et l’autre poignée dans les <strong>mêmes trous de l’autre côté</strong>.</p>
     <div class="tabs" role="group" aria-label="Zone">${ORDER.map((c) => `<button class="tab col" style="--c:${COLORS[c].hex}" data-act="bsel" data-c="${c}" aria-pressed="${boardSel.c === c}">${COLORS[c].name}</button>`).join('')}</div>
@@ -308,8 +322,6 @@ function finish(stopped = false) {
     if (!stopped || Object.keys(cur.res).length) {
       const test = { id: 't' + Date.now().toString(36), date: cur.date, res: Object.fromEntries(ORDER.map((c) => [c, cur.res[c] > 0 ? cur.res[c] : null])), pos: { ...S.pos } };
       if (ORDER.some((c) => test.res[c])) S.tests.push(test);
-      if (S.cycle) S.cycles.push(S.cycle);
-      S.cycle = makeCycle(ORDER.some((c) => test.res[c]) ? test : null, S.profile, addDays(cur.date, 1));
     }
   }
   S.sessions.push(rec); cur.rec = rec; persist();
@@ -317,9 +329,8 @@ function finish(stopped = false) {
 function summary() {
   const r = cur.rec, min = Math.max(1, Math.round(r.dur / 60));
   if (cur.type === 'test') {
-    const cy = S.cycle;
     return `<h1>Test terminé</h1><section class="card"><h2>Ton max sur la planche</h2><ul class="mini">${ORDER.map((c) => `<li>${chip(c)}<span class="tgt">${cur.res[c] || '—'}</span></li>`).join('')}</ul></section>
-    <section class="card"><h2>Ton plan, semaine 1</h2><ul class="mini">${ORDER.map((c) => `<li>${chip(c)}<span class="tgt">${cy.sets} × ${cy.base[c]}</span></li>`).join('')}</ul><p>Il commence ${fmtDate(cy.start, { weekday: 'long', day: 'numeric', month: 'long' })}. Aujourd’hui : repos!</p></section>
+    <section class="card"><p>Ton plan ne change pas. Ces résultats gardent ta progression prudente : ta cible ne dépassera pas 75 % de ton max sur la planche.</p></section>
     <a class="btn primary big" href="#plan">Voir mon plan</a><a class="btn" href="#accueil">Accueil</a>`;
   }
   return `<h1>${r.stopped ? 'Séance arrêtée' : 'Séance terminée!'}</h1>
@@ -348,7 +359,6 @@ document.addEventListener('click', (ev) => {
   const a = b.dataset.act;
   if (a === 'start-plan') newSession('plan');
   else if (a === 'start-test') newSession('test');
-  else if (a === 'skip-test') ask('Commencer sans test?', `Ton plan commencera aujourd’hui avec des valeurs prudentes (2 séries de ${defaultBase(S.profile)}). Tu pourras faire le test sur la planche plus tard, dans Progrès.`, 'Commencer', () => { S.cycle = makeCycle(null, S.profile, iso()); persist(); render(true); });
   else if (a === 'week') { planWeek = Number(b.dataset.w); render(false); $(`[data-act=week][data-w="${planWeek}"]`)?.focus(); }
   else if (a === 'bsel') { boardSel = { c: b.dataset.c, i: S.pos[b.dataset.c] }; render(false); $(`[data-act=bsel][data-c="${boardSel.c}"]`)?.focus(); }
   else if (a === 'bpos') { boardSel.i = Number(b.dataset.i); render(false); $(`[data-act=bpos][data-i="${boardSel.i}"]`)?.focus(); }
@@ -376,7 +386,9 @@ document.addEventListener('click', (ev) => {
 document.addEventListener('submit', (ev) => {
   if (ev.target.id !== 'profile') return;
   ev.preventDefault();
-  S.profile = readProfile(ev.target); S.profileSaved = true; persist();
+  S.profile = readProfile(ev.target); S.profileSaved = true;
+  if (!S.cycle) { S.cycle = newCycle(iso()); S.planStart = S.cycle.start; }
+  persist();
   const msg = route === 'reglages';
   render(!msg);
   if (msg) { const f = $('#profile'); f.insertAdjacentHTML('beforeend', '<p class="note ok" role="status">Profil enregistré.</p>'); }
@@ -390,7 +402,7 @@ document.addEventListener('change', (ev) => {
     t.files[0].text().then((txt) => {
       const o = JSON.parse(txt);
       if (!validImport(o)) throw new Error('format');
-      ask('Importer ces données?', `${plural(o.sessions.length, 'séance')} et ${plural(o.tests.length, 'test')}. Elles remplaceront les données actuelles.`, 'Importer', () => { save(o); S = load(); go('reglages'); $('#datamsg').textContent = 'Données importées.'; });
+      ask('Importer ces données?', `${plural(o.sessions.length, 'séance')} et ${plural(o.tests.length, 'test')}. Elles remplaceront les données actuelles.`, 'Importer', () => { save(o); S = load(); migrate(); go('reglages'); $('#datamsg').textContent = 'Données importées.'; });
     }).catch(() => { $('#datamsg').textContent = 'Fichier non reconnu. Choisis un export de Planche Pompes.'; }).finally(() => { t.value = ''; });
   }
 });
