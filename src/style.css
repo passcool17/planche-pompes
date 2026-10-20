@@ -146,3 +146,5 @@ dialog::backdrop{background:#000b}
 #nav[hidden]{display:none}
 .row .btn{flex:1 1 0;width:auto}
 .row.center .btn.sm{flex:none}
+#install:not(:empty){position:fixed;left:12px;right:12px;bottom:calc(72px + env(safe-area-inset-bottom));z-index:6;max-width:616px;margin:0 auto}
+#install .card{margin:0;box-shadow:0 10px 30px #000c;background:#1b1708}
