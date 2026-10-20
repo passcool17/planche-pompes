@@ -5,9 +5,11 @@ Appli installable (PWA) pour la planche à pompes 21 en 1 (AERLANG PU3-B) : test
 **En ligne :** https://passcool17.github.io/planche-pompes/
 
 ## Plan
-- Séance 1 : test sur la planche (max de pompes en bonne forme, par couleur).
-- Départ : ~55 % du max au test, 3 séries. Sans test : valeurs prudentes (~40 % du max au sol, 6 à 15), 2 séries.
-- Semaine réussie : +1 répétition/série (45 ans et plus) ou +2. Semaine 4 allégée (2 séries, −30 %). Nouveau test après 4 semaines.
+- Départ : 2 × 10 pour chaque couleur (programme de 7 jours du feuillet).
+- Semaine réussie (toutes les séries atteintes, pas « Difficile ») : +1 répétition/série (45 ans et plus) ou +2.
+- À 2 × 15 : passage à 3 × 10, puis même progression.
+- Semaine 4 allégée (2 séries, environ −30 %), puis le cycle suivant repart du niveau atteint.
+- Test sur la planche optionnel : la cible ne dépasse pas 75 % du dernier max (jamais sous 2 × 10).
 
 ## Développement
 ```
