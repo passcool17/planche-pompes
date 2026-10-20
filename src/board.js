@@ -66,3 +66,22 @@ export function boardSVG(focus, { title } = {}) {
   const t = title || (fl ? `Planche : poignées sur la ligne ${COLORS[focus.c].color.toLowerCase()} ${fl[2]}, mêmes trous à gauche et à droite` : 'Planche : les 4 zones de couleur');
   return `<svg class="board" viewBox="0 0 ${W} ${H}" role="img" aria-label="${t}"><rect class="bg" x="4" y="4" width="${W - 8}" height="${H - 8}" rx="18"/><line class="fold" x1="500" y1="20" x2="500" y2="${H - 20}"/>${s}</svg>`;
 }
+
+// Niveaux de difficulté (notre classement, pas celui du feuillet) : 1 = poignées vers le bord extérieur, 3 = vers le centre.
+// Chaque niveau liste ses positions (paires de trous) ; la 1re est celle par défaut.
+const LEVEL_PAIRS = {
+  chest: [[['B1', 'B3'], ['B4', 'B6']], [['B1', 'G1'], ['B6', 'Y2']], [['G1', 'Y1'], ['G4', 'B7']]],
+  shoulders: [[['B1', 'R1']], [['R1', 'R2'], ['R2', 'G4']], [['R2', 'R3'], ['R3', 'B7']]],
+  back: [[['B4', 'Y2'], ['B6', 'Y3']], [['Y2', 'Y3'], ['R1', 'Y1']], [['G2', 'Y1']]],
+  triceps: [[['B6', 'G4'], ['G1', 'R1']], [['G4', 'G5'], ['G5', 'Y3']], [['G1', 'G2'], ['G2', 'G3']]],
+};
+const idxOf = (c, [a, b]) => {
+  const i = LINES[c].findIndex(([x, y]) => (x === a && y === b) || (x === b && y === a));
+  if (i < 0) throw new Error(`Position inconnue ${c} ${a}-${b}`);
+  return i;
+};
+export const NLEVELS = 3;
+/** LEVELS[c][n-1] = indices dans LINES[c] des positions du niveau n. */
+export const LEVELS = Object.fromEntries(ORDER.map((c) => [c, LEVEL_PAIRS[c].map((ps) => ps.map((p) => idxOf(c, p)))]));
+/** Niveau (1 à 3) d'une position LINES[c][i]. */
+export const levelOfPos = (c, i) => LEVELS[c].findIndex((l) => l.includes(i)) + 1 || 1;

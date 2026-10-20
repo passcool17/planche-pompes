@@ -149,3 +149,13 @@ dialog::backdrop{background:#000b}
 #install:not(:empty){position:fixed;left:12px;right:12px;bottom:calc(72px + env(safe-area-inset-bottom));z-index:6;max-width:616px;margin:0 auto}
 #install .card{margin:0;box-shadow:0 10px 30px #000c;background:#1b1708}
 .opt{font-size:.75rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-left:6px}
+.niv{font-size:.72rem;font-weight:700;color:var(--mut);border:1px solid #444;border-radius:6px;padding:0 5px;margin-left:2px}
+.lvl{font-size:.85rem;font-weight:800;color:#141000;background:var(--gold);border-radius:999px;padding:2px 9px;white-space:nowrap}
+.lvl.big{font-size:.9rem;vertical-align:middle;margin-left:6px}
+.lvgroup h3{font-size:.95rem;margin:14px 0 6px;color:var(--tx)}
+.lvgroup:first-of-type h3{margin-top:4px}
+.tabs .tab.col{flex:1 1 auto;padding:8px 10px}
+.tgt{white-space:nowrap}
+.plan .exl .chip{flex-wrap:wrap;gap:4px 7px}
+.tabs.zones{display:grid;grid-template-columns:repeat(4,1fr)}
+@media (max-width:420px){.tabs.zones{grid-template-columns:repeat(2,1fr)}}

@@ -1,5 +1,5 @@
 import './style.css';
-import { boardSVG, COLORS, ORDER, LINES } from './board.js';
+import { boardSVG, COLORS, ORDER, LINES, LEVELS, NLEVELS, levelOfPos } from './board.js';
 import { WEEK, CYCLE_WEEKS, iso, today, weekTable, streak, newCycle, rollCycles, step, parse, START, MAX_REPS, levelAt, testCap } from './plan.js';
 import { load, save, DEFAULT, validImport, clear, lbToKg, kgToLb, cmToFtIn, ftInToCm } from './store.js';
 import { WARMUP, TIPS, SAFETY } from './content.js';
@@ -10,12 +10,19 @@ const persist = () => save(S);
 /** Départ à 2 × 10 : un plan créé par l’ancienne version (basé sur le test) repart à 2 × 10 aujourd’hui. L’historique est gardé. */
 function migrate() {
   let ch = false;
-  if (S.cycle && S.cycle.v !== 2) { S.cycles.push(S.cycle); S.cycle = newCycle(iso()); S.planStart = S.cycle.start; S.migrated2x10 = iso(); ch = true; }
+  // v2 → v3 : niveaux de difficulté. Chaque couleur passe au niveau 1 en gardant ses répétitions (même cycle, historique intact).
+  if (S.cycle && S.cycle.v === 2) { for (const c of ORDER) S.cycle.level[c] = { ...S.cycle.level[c], lvl: S.cycle.level[c].lvl || 1 }; S.cycle.v = 3; S.migratedLevels = iso(); ch = true; }
+  if (!S.lvlPosV) { S.lvlPos = { ...Object.fromEntries(ORDER.map((c) => [c, {}])), ...S.lvlPos }; for (const c of ORDER) if (S.pos?.[c] > 0) S.lvlPos[c][levelOfPos(c, S.pos[c])] = S.pos[c]; S.lvlPosV = 1; ch = true; }
+  if (S.cycle && S.cycle.v !== 3) { S.cycles.push(S.cycle); S.cycle = newCycle(iso()); S.planStart = S.cycle.start; S.migrated2x10 = iso(); ch = true; }
   if (!S.cycle && S.profileSaved) { S.cycle = newCycle(iso()); S.planStart = S.cycle.start; ch = true; }
   if (rollCycles(S)) ch = true;
   if (ch) persist();
 }
 migrate();
+/** Niveau de difficulté actuel d'une couleur et position choisie pour ce niveau. */
+const lvlOf = (c) => (S.cycle ? levelAt(S, S.cycle, today(S).week || 1, c).lvl || 1 : 1);
+const posFor = (c, lvl = lvlOf(c)) => { const ok = LEVELS[c][lvl - 1], p = S.lvlPos?.[c]?.[lvl]; return ok.includes(p) ? p : ok[0]; };
+const niv = (n) => `<small class="niv">Niv. ${n}</small>`;
 const $ = (q, r = document) => r.querySelector(q);
 const app = $('#app');
 const SPEED = Math.max(1, Number(localStorage.getItem('pp-speed')) || 1); // tests automatisés seulement
@@ -89,16 +96,16 @@ function todayCard() {
   const t = today(S);
   if (t.kind === 'none') return '';
   if (t.kind === 'before') return `<section class="card hero"><h2>Ton plan commence ${fmtDate(t.start, { weekday: 'long' })}</h2><p>Premier jour : ${WEEK[0].map((c) => chip(c)).join(' ')}, 2 × 10.</p><a class="btn" href="#plan">Voir mon plan</a></section>`;
-  const head = `${S.migrated2x10 === iso() ? '<p class="badge">Nouveau : ton plan repart à 2 × 10. Ton historique est gardé.</p>' : ''}<p class="eyebrow">Semaine ${t.week} sur ${CYCLE_WEEKS} · ${DAYS[t.day - 1]}</p>`;
+  const head = `${S.migrated2x10 === iso() ? '<p class="badge">Nouveau : ton plan repart à 2 × 10. Ton historique est gardé.</p>' : ''}${S.migratedLevels === iso() ? '<p class="badge">Nouveau : 3 niveaux par couleur. Tu commences au niveau 1 avec tes répétitions actuelles.</p>' : ''}<p class="eyebrow">Semaine ${t.week} sur ${CYCLE_WEEKS} · ${DAYS[t.day - 1]}</p>`;
   if (t.kind === 'rest') {
     const nxt = WEEK.slice(t.day).findIndex(Boolean);
     return `<section class="card hero">${head}<h2>Jour de repos</h2><p>Tes muscles se renforcent pendant le repos. Une marche ou quelques étirements, c’est parfait.</p>${nxt >= 0 ? `<p>Prochaine séance : ${WEEK[t.day + nxt].map((c) => chip(c)).join(' ')}</p>` : ''}</section>`;
   }
-  const exs = t.ex.map((e) => `<li>${chip(e.c)}<span class="tgt">${e.sets} × ${e.reps}</span></li>`).join('');
+  const exs = t.ex.map((e) => `<li>${chip(e.c, ' ' + niv(e.lvl))}<span class="tgt">${e.sets} × ${e.reps}</span></li>`).join('');
   if (t.done) return `<section class="card hero done">${head}<h2>Séance faite ✓</h2><p>${plural(t.done.total, 'pompe')} aujourd’hui. Beau travail!</p><ul class="mini">${exs}</ul><a class="btn" href="#progres">Voir mes progrès</a></section>`;
   return `<section class="card hero">${head}<h2>Séance du jour</h2>${t.ex[0].deload ? '<p class="badge">Semaine allégée : moins de séries pour bien récupérer.</p>' : ''}
     <ul class="mini">${exs}</ul>
-    <div class="board-wrap">${boardSVG({ c: t.ex[0].c, i: S.pos[t.ex[0].c] })}</div>
+    <div class="board-wrap">${boardSVG({ c: t.ex[0].c, i: posFor(t.ex[0].c, t.ex[0].lvl) })}</div>
     <p class="note">Échauffement guidé inclus (environ 3 min).</p>
     <button class="btn primary big" data-act="start-plan">Commencer la séance</button></section>`;
 }
@@ -126,14 +133,16 @@ function home() {
 }
 
 // ---------- Plan ----------
-let planWeek = null, boardSel = { c: 'chest', i: 0 };
+let planWeek = null, boardSel = null;
 function planScreen() {
   const cy = S.cycle, t = today(S);
+  if (!boardSel) boardSel = { c: 'chest', i: posFor('chest') };
   const wk = planWeek || (t.week && t.week <= CYCLE_WEEKS ? t.week : 1);
   const cw = t.week || 1, proj = wk > cw;
-  const rows = weekTable(S, wk, cw).map((d) => `<tr${t.week === wk && t.day === d.day ? ' class="now"' : ''}><th scope="row">${DAYS[d.day - 1]}${d.date ? `<small>${fmtDate(d.date)}</small>` : ''}</th><td>${d.ex ? d.ex.map((e) => `<div class="exl">${chip(e.c)}<span class="tgt">${e.sets} × ${e.reps}</span></div>`).join('') : '<span class="rest">Repos</span>'}</td></tr>`).join('');
+  const rows = weekTable(S, wk, cw).map((d) => `<tr${t.week === wk && t.day === d.day ? ' class="now"' : ''}><th scope="row">${DAYS[d.day - 1]}${d.date ? `<small>${fmtDate(d.date)}</small>` : ''}</th><td>${d.ex ? d.ex.map((e) => `<div class="exl">${chip(e.c, ' ' + niv(e.lvl))}<span class="tgt">${e.sets} × ${e.reps}</span></div>`).join('') : '<span class="rest">Repos</span>'}</td></tr>`).join('');
   const inc = step(S.profile);
   return `<h1>Mon plan</h1>
+  ${cy ? `<section class="card"><h2>Ton niveau actuel</h2><p class="note">Niveau 1 = poignées vers le bord extérieur, niveau 3 = vers le centre. Ce classement est le nôtre, il ne vient pas du feuillet.</p>${ORDER.some((c) => { const l = levelAt(S, cy, cw, c); return l.sets < 3 && l.reps >= testCap(S, c, l.lvl) && l.reps < MAX_REPS; }) ? '<p class="note">« Limite du test » : refais le test sur la planche pour continuer à monter.</p>' : ''}<ul class="mini">${ORDER.map((c) => { const l = levelAt(S, cy, cw, c), capped = l.sets < 3 && l.reps >= testCap(S, c, l.lvl) && l.reps < MAX_REPS; return `<li>${chip(c)}<span class="tgt"><span class="lvl">Niveau ${l.lvl}/${NLEVELS}</span> · ${l.sets} × ${l.reps}${capped ? ' <small>(limite du test)</small>' : ''}</span></li>`; }).join('')}</ul></section>` : ''}
   <section class="card">
     <p>${cy ? `Cycle ${cy.n || 1}, commencé ${fmtDate(cy.start, { day: 'numeric', month: 'long' })}.` : 'Ton plan commence à 2 × 10 dès que ton profil est enregistré.'} ${!cy || (cy.n || 1) === 1 ? 'Départ : 2 séries de 10 pour chaque couleur.' : ''}</p>
     <div class="tabs" role="group" aria-label="Semaine">${[1, 2, 3, 4].map((w) => `<button class="tab" data-act="week" data-w="${w}" aria-pressed="${w === wk}">Sem. ${w}</button>`).join('')}</div>
@@ -141,21 +150,21 @@ function planScreen() {
     ${proj ? '<p class="note">Aperçu si tu réussis tes séances. Ça s’ajuste selon ce que tu fais vraiment.</p>' : ''}
   </section>
   <section class="card"><h2>Comment ça progresse</h2><ul class="list">
-    <li>Départ : 2 × 10 pour chaque couleur.</li>
+    <li>Départ : <strong>niveau 1</strong>, 2 × 10 pour chaque couleur.</li>
     <li>Chaque semaine réussie (toutes les séries atteintes, pas « Difficile ») : +${inc} répétition${inc > 1 ? 's' : ''} par série.</li>
-    <li>Arrivé à 2 × ${MAX_REPS} : on passe à <strong>3 × 10</strong>, puis on remonte de la même façon.</li>
+    <li>Semaine réussie à 2 × ${MAX_REPS} : tu passes au <strong>niveau suivant</strong> (poignées plus près du centre) et tu repars à 2 × 10.</li>
+    <li>Au niveau 3, après 2 × ${MAX_REPS} : on passe à <strong>3 × 10</strong>, puis on remonte de la même façon.</li>
     <li>Semaine 4 : allégée (2 séries, environ 30 % de moins) pour récupérer. Le cycle suivant repart de ton niveau.</li>
-    <li>Test sur la planche (optionnel) : ta cible ne dépasse pas 75 % de ton max au dernier test. Refais-le pour débloquer la suite.</li>
+    <li>Test sur la planche (optionnel) : ta cible ne dépasse pas 75 % de ton max au dernier test fait au même niveau. Refais-le pour débloquer la suite.</li>
     <li>Trop dur? Fais moins de répétitions, mais ne lâche pas. Repos de ${S.settings.rest} s entre les séries.</li>
   </ul></section>
-  ${cy ? `<section class="card"><h2>Ton niveau actuel</h2>${ORDER.some((c) => { const l = levelAt(S, cy, cw, c); return l.sets < 3 && l.reps >= testCap(S, c) && l.reps < MAX_REPS; }) ? '<p class="note">« Limite du test » : refais le test sur la planche pour continuer à monter.</p>' : ''}<ul class="mini">${ORDER.map((c) => { const l = levelAt(S, cy, cw, c), capped = l.sets < 3 && l.reps >= testCap(S, c) && l.reps < MAX_REPS; return `<li>${chip(c)}<span class="tgt">${l.sets} × ${l.reps}${capped ? ' <small>(limite du test)</small>' : ''}</span></li>`; }).join('')}</ul></section>` : ''}
   <section class="card"><h2>La planche</h2>
     <p>Mets une poignée dans 2 trous reliés par une ligne de couleur, et l’autre poignée dans les <strong>mêmes trous de l’autre côté</strong>.</p>
-    <div class="tabs" role="group" aria-label="Zone">${ORDER.map((c) => `<button class="tab col" style="--c:${COLORS[c].hex}" data-act="bsel" data-c="${c}" aria-pressed="${boardSel.c === c}">${COLORS[c].name}</button>`).join('')}</div>
+    <div class="tabs zones" role="group" aria-label="Zone">${ORDER.map((c) => `<button class="tab col" style="--c:${COLORS[c].hex}" data-act="bsel" data-c="${c}" aria-pressed="${boardSel.c === c}">${COLORS[c].name}</button>`).join('')}</div>
     <div class="board-wrap">${boardSVG(boardSel)}</div>
-    <div class="poslist" role="group" aria-label="Positions ${COLORS[boardSel.c].name}">${LINES[boardSel.c].map((l, i) => `<button class="tab" data-act="bpos" data-i="${i}" aria-pressed="${boardSel.i === i}">${i + 1}. ${l[2]}${S.pos[boardSel.c] === i ? ' ★' : ''}</button>`).join('')}</div>
-    <p class="note">★ = position utilisée dans tes séances. Garde la même pour comparer tes tests.</p>
-    <button class="btn" data-act="usepos" ${S.pos[boardSel.c] === boardSel.i ? 'disabled' : ''}>Utiliser cette position pour ${COLORS[boardSel.c].name}</button>
+    ${LEVELS[boardSel.c].map((ids, k) => `<div class="lvgroup"><h3 id="lv-${k + 1}">Niveau ${k + 1}${k === 0 ? ' · bord extérieur' : k === NLEVELS - 1 ? ' · vers le centre' : ''}${lvlOf(boardSel.c) === k + 1 ? ' <span class="badge">ton niveau</span>' : ''}</h3><div class="poslist" role="group" aria-labelledby="lv-${k + 1}">${ids.map((i) => `<button class="tab" data-act="bpos" data-i="${i}" aria-pressed="${boardSel.i === i}">${LINES[boardSel.c][i][2]}${posFor(boardSel.c, k + 1) === i ? ' ★' : ''}</button>`).join('')}</div></div>`).join('')}
+    <p class="note">★ = position utilisée à ce niveau dans tes séances. Les niveaux sont notre classement (du bord vers le centre), pas celui du feuillet.</p>
+    <button class="btn" data-act="usepos" ${posFor(boardSel.c, levelOfPos(boardSel.c, boardSel.i)) === boardSel.i ? 'disabled' : ''}>Utiliser cette position au niveau ${levelOfPos(boardSel.c, boardSel.i)} (${COLORS[boardSel.c].name})</button>
   </section>
   <section class="card"><h2>Conseils de forme</h2><ul class="list">${TIPS.all.map((x) => `<li>${x}</li>`).join('')}</ul></section>`;
 }
@@ -211,7 +220,7 @@ function newSession(type) {
   if (type === 'plan') {
     Object.assign(cur, { cycleId: S.cycle.id, week: t.week, day: t.day });
     t.ex.forEach((e, ei) => {
-      cur.ex.push({ c: e.c, pos: S.pos[e.c], target: e.reps, nSets: e.sets, deload: e.deload, sets: [] });
+      cur.ex.push({ c: e.c, lvl: e.lvl || 1, pos: posFor(e.c, e.lvl || 1), target: e.reps, nSets: e.sets, deload: e.deload, sets: [] });
       for (let k = 0; k < e.sets; k++) {
         steps.push({ t: 'set', ei, k });
         if (!(ei === t.ex.length - 1 && k === e.sets - 1)) steps.push({ t: 'rest', secs: S.settings.rest });
@@ -227,9 +236,9 @@ function newSession(type) {
 function nextLabel(from) {
   const n = cur.steps.slice(from + 1).find((s) => s.t === 'set' || s.t === 'test');
   if (!n) return null;
-  if (n.t === 'test') return { c: n.c, text: `Test ${COLORS[n.c].name}` };
+  if (n.t === 'test') return { c: n.c, pos: posFor(n.c), text: `Test ${COLORS[n.c].name}` };
   const e = cur.ex[n.ei];
-  return { c: e.c, text: `${COLORS[e.c].name} · série ${n.k + 1} sur ${e.nSets} · ${e.target} rép.` };
+  return { c: e.c, pos: e.pos, text: `Niveau ${e.lvl} · série ${n.k + 1} sur ${e.nSets} · ${e.target} rép.` };
 }
 function counter(lbl) {
   return `<button class="tap" data-act="tap" aria-describedby="taphelp"><span class="n" id="cnt" aria-live="polite">${cur.count}</span><span id="taphelp" class="h">${lbl}</span></button>
@@ -248,17 +257,19 @@ function sessionScreen() {
   }
   if (s.t === 'set') {
     const e = cur.ex[s.ei], C = COLORS[e.c], L = LINES[e.c][e.pos];
-    return `${bar}<p class="eyebrow" style="color:${C.text}">${C.name} · série ${s.k + 1} sur ${e.nSets}</p><h1>${C.name}</h1>
+    const alt = LEVELS[e.c][e.lvl - 1].length > 1 && s.k === 0;
+    return `${bar}<p class="eyebrow" style="color:${C.text}">${C.name} · série ${s.k + 1} sur ${e.nSets}</p><h1>${C.name} <span class="lvl big">Niveau ${e.lvl}/${NLEVELS}</span></h1>
     <div class="board-wrap">${boardSVG({ c: e.c, i: e.pos })}</div>
     <p class="pos">Poignées : ligne <strong style="color:${C.text}">${C.color.toLowerCase()}</strong> ${L[2]}, mêmes trous des 2 côtés.</p>
+    ${alt ? `<button class="btn ghost" data-act="altpos">Autre position du niveau ${e.lvl}</button>` : ''}
     <p class="target"><strong>${e.target}</strong> répétitions${e.deload ? ' <span class="badge">semaine allégée</span>' : ''}</p>
     ${counter('Touche à chaque pompe')}
     <button class="btn primary big" data-act="setdone" id="setdone">Série faite</button>
     <details class="tips"><summary>Conseils de forme</summary><ul class="list"><li>${TIPS[e.c]}</li>${TIPS.all.map((x) => `<li>${x}</li>`).join('')}</ul></details>`;
   }
   if (s.t === 'test') {
-    const C = COLORS[s.c], pos = S.pos[s.c], L = LINES[s.c][pos], i = ORDER.indexOf(s.c);
-    return `${bar}<p class="eyebrow" style="color:${C.text}">Test sur la planche · ${i + 1} sur 4</p><h1>Test ${C.name}</h1>
+    const C = COLORS[s.c], pos = posFor(s.c), L = LINES[s.c][pos], i = ORDER.indexOf(s.c);
+    return `${bar}<p class="eyebrow" style="color:${C.text}">Test sur la planche · ${i + 1} sur 4 · Niveau ${lvlOf(s.c)}/${NLEVELS}</p><h1>Test ${C.name}</h1>
     <div class="board-wrap">${boardSVG({ c: s.c, i: pos })}</div>
     <p class="pos">Poignées : ligne <strong style="color:${C.text}">${C.color.toLowerCase()}</strong> ${L[2]}, mêmes trous des 2 côtés.</p>
     <p class="how">Fais le plus de pompes possible <strong>sur la planche</strong>, avec une bonne forme. Arrête dès que ton corps n’est plus droit ou que ça tire dans une articulation.</p>
@@ -268,11 +279,11 @@ function sessionScreen() {
   }
   if (s.t === 'rest') {
     const nx = nextLabel(cur.idx);
-    const swap = nx && cur.steps[cur.idx - 1] && (() => { const p = cur.steps[cur.idx - 1]; const pc = p.t === 'test' ? p.c : cur.ex[p.ei]?.c; return pc !== nx.c; })();
+    const swap = nx && cur.steps[cur.idx - 1] && (() => { const p = cur.steps[cur.idx - 1]; const pp = p.t === 'test' ? posFor(p.c) : cur.ex[p.ei]?.pos, pc = p.t === 'test' ? p.c : cur.ex[p.ei]?.c; return pc !== nx.c || pp !== nx.pos; })();
     return `${bar}<p class="eyebrow">Repos</p><h1>Respire</h1>
     <div class="timer" id="timer" data-secs="${s.secs}" data-auto="1">${ring(s.secs, s.secs)}</div>
     <div class="row center"><button class="btn" data-act="plus15">+15 s</button><button class="btn" data-act="next">Passer</button></div>
-    ${nx ? `<section class="card nextup"><h2>Ensuite</h2><p>${chip(nx.c)} ${nx.text}</p>${swap ? `<p class="note">Change tes poignées de place :</p><div class="board-wrap sm">${boardSVG({ c: nx.c, i: S.pos[nx.c] })}</div>` : ''}</section>` : ''}`;
+    ${nx ? `<section class="card nextup"><h2>Ensuite</h2><p>${chip(nx.c)} ${nx.text}</p>${swap ? `<p class="note">Change tes poignées de place :</p><div class="board-wrap sm">${boardSVG({ c: nx.c, i: nx.pos })}</div>` : ''}</section>` : ''}`;
   }
   return summary();
 }
@@ -318,9 +329,9 @@ function finish(stopped = false) {
   const total = cur.type === 'test' ? ORDER.reduce((a, c) => a + (cur.res[c] || 0), 0) : cur.ex.reduce((a, e) => a + e.sets.reduce((x, y) => x + y, 0), 0);
   const rec = { id: 's' + Date.now().toString(36), type: cur.type, date: cur.date, startedAt: cur.startedAt, dur: Math.round((Date.now() - cur.startedAt) / 1000), total, stopped, rating: null, ex: cur.ex, cycleId: cur.cycleId, week: cur.week, day: cur.day };
   if (cur.type === 'test') {
-    rec.ex = ORDER.filter((c) => cur.res[c] > 0).map((c) => ({ c, pos: S.pos[c], target: 0, nSets: 1, sets: [cur.res[c]] }));
+    rec.ex = ORDER.filter((c) => cur.res[c] > 0).map((c) => ({ c, lvl: lvlOf(c), pos: posFor(c), target: 0, nSets: 1, sets: [cur.res[c]] }));
     if (!stopped || Object.keys(cur.res).length) {
-      const test = { id: 't' + Date.now().toString(36), date: cur.date, res: Object.fromEntries(ORDER.map((c) => [c, cur.res[c] > 0 ? cur.res[c] : null])), pos: { ...S.pos } };
+      const test = { id: 't' + Date.now().toString(36), date: cur.date, res: Object.fromEntries(ORDER.map((c) => [c, cur.res[c] > 0 ? cur.res[c] : null])), pos: Object.fromEntries(ORDER.map((c) => [c, posFor(c)])), lvl: Object.fromEntries(ORDER.map((c) => [c, lvlOf(c)])) };
       if (ORDER.some((c) => test.res[c])) S.tests.push(test);
     }
   }
@@ -360,10 +371,11 @@ document.addEventListener('click', (ev) => {
   if (a === 'start-plan') newSession('plan');
   else if (a === 'start-test') newSession('test');
   else if (a === 'week') { planWeek = Number(b.dataset.w); render(false); $(`[data-act=week][data-w="${planWeek}"]`)?.focus(); }
-  else if (a === 'bsel') { boardSel = { c: b.dataset.c, i: S.pos[b.dataset.c] }; render(false); $(`[data-act=bsel][data-c="${boardSel.c}"]`)?.focus(); }
+  else if (a === 'bsel') { boardSel = { c: b.dataset.c, i: posFor(b.dataset.c) }; render(false); $(`[data-act=bsel][data-c="${boardSel.c}"]`)?.focus(); }
   else if (a === 'bpos') { boardSel.i = Number(b.dataset.i); render(false); $(`[data-act=bpos][data-i="${boardSel.i}"]`)?.focus(); }
-  else if (a === 'usepos') { S.pos[boardSel.c] = boardSel.i; persist(); render(false); $(`[data-act=bpos][data-i="${boardSel.i}"]`)?.focus(); }
+  else if (a === 'usepos') { (S.lvlPos[boardSel.c] ||= {})[levelOfPos(boardSel.c, boardSel.i)] = boardSel.i; persist(); render(false); $(`[data-act=bpos][data-i="${boardSel.i}"]`)?.focus(); }
   else if (a === 'next') advance();
+  else if (a === 'altpos') { const e = cur.ex[cur.steps[cur.idx].ei], ids = LEVELS[e.c][e.lvl - 1]; e.pos = ids[(ids.indexOf(e.pos) + 1) % ids.length]; (S.lvlPos[e.c] ||= {})[e.lvl] = e.pos; persist(); const n = cur.count; render(false); cur.count = n; updCount(); $('[data-act=altpos]')?.focus(); }
   else if (a === 'tstart') { unlock(); b.disabled = true; b.textContent = 'C’est parti…'; beep(S.settings, 'go'); runTimer($('#timer'), () => { b.disabled = false; b.textContent = 'Suivant'; b.dataset.act = 'next'; b.focus(); }); }
   else if (a === 'plus15') cur.addTime?.(15);
   else if (a === 'tap') { cur.count = Math.min(300, cur.count + 1); if (S.settings.vib && navigator.vibrate) navigator.vibrate(15); updCount(); }

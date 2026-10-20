@@ -5,6 +5,7 @@ export const DEFAULT = () => ({
   profileSaved: false,
   settings: { rest: 30, testRest: 120, sound: true, vib: true },
   pos: { chest: 0, shoulders: 0, back: 0, triceps: 0 },
+  lvlPos: { chest: {}, shoulders: {}, back: {}, triceps: {} },
   tests: [], cycle: null, cycles: [], sessions: [],
 });
 export function load() {

@@ -5,11 +5,12 @@ Appli installable (PWA) pour la planche à pompes 21 en 1 (AERLANG PU3-B) : test
 **En ligne :** https://passcool17.github.io/planche-pompes/
 
 ## Plan
-- Départ : 2 × 10 pour chaque couleur (programme de 7 jours du feuillet).
+- Départ : niveau 1, 2 × 10 pour chaque couleur (programme de 7 jours du feuillet).
+- 3 niveaux par couleur : 1 = poignées vers le bord extérieur, 3 = vers le centre (notre classement, pas celui du feuillet). Chaque niveau a une position par défaut et parfois une 2e au choix.
 - Semaine réussie (toutes les séries atteintes, pas « Difficile ») : +1 répétition/série (45 ans et plus) ou +2.
-- À 2 × 15 : passage à 3 × 10, puis même progression.
+- Semaine réussie à 2 × 15 : niveau suivant, retour à 2 × 10. Au niveau 3, après 2 × 15 : 3 × 10.
 - Semaine 4 allégée (2 séries, environ −30 %), puis le cycle suivant repart du niveau atteint.
-- Test sur la planche optionnel : la cible ne dépasse pas 75 % du dernier max (jamais sous 2 × 10).
+- Test sur la planche optionnel : la cible ne dépasse pas 75 % du dernier max fait au même niveau (jamais sous 2 × 10).
 
 ## Développement
 ```

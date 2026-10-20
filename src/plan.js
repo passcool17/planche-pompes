@@ -1,4 +1,4 @@
-import { ORDER } from './board.js';
+import { ORDER, NLEVELS, levelOfPos } from './board.js';
 
 // Programme de 7 jours du feuillet (mêmes couleurs, même ordre).
 export const WEEK = [
@@ -11,23 +11,27 @@ export const parse = (s) => { const [y, m, d] = s.split('-').map(Number); return
 export const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
 export const diffDays = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
 
-export const START = { reps: 10, sets: 2 }; // Départ : 2 × 10 pour toutes les couleurs.
-export const MAX_REPS = 15; // À 2 × 15, on passe à 3 × 10.
+export const START = { reps: 10, sets: 2, lvl: 1 }; // Départ : niveau 1, 2 × 10 pour toutes les couleurs.
+export const MAX_REPS = 15; // À 2 × 15 : niveau suivant à 2 × 10 ; au niveau 3, on passe à 3 × 10.
 export const step = (profile) => ((Number(profile?.age) || 0) >= 45 ? 1 : 2);
 
 /** Niveau suivant après une semaine réussie. */
 export function nextLevel(l, inc = 1) {
-  if (l.sets < 3 && l.reps + inc > MAX_REPS) return { reps: 10, sets: 3 };
-  return { reps: l.reps + inc, sets: l.sets };
+  const lvl = l.lvl || 1;
+  if (l.sets < 3 && l.reps + inc > MAX_REPS) return lvl < NLEVELS ? { reps: START.reps, sets: 2, lvl: lvl + 1 } : { reps: 10, sets: 3, lvl };
+  return { reps: l.reps + inc, sets: l.sets, lvl };
 }
 /** Le test sur la planche (optionnel) freine la progression : cible ≤ 75 % du dernier max, sans jamais descendre sous 2 × 10. */
-export function testCap(state, c) {
-  const t = [...(state.tests || [])].reverse().find((x) => x.res?.[c] > 0);
+/** Niveau auquel une couleur a été testée (les anciens tests se déduisent de la position utilisée). */
+export const testLvl = (t, c) => t.lvl?.[c] || levelOfPos(c, t.pos?.[c] ?? 0);
+/** La limite ne vaut que pour le niveau testé : un test fait à un autre niveau est ignoré. */
+export function testCap(state, c, lvl = 1) {
+  const t = [...(state.tests || [])].reverse().find((x) => x.res?.[c] > 0 && testLvl(x, c) === lvl);
   return t ? Math.max(START.reps, Math.round(t.res[c] * 0.75)) : Infinity;
 }
 export function newCycle(start, level) {
   const lv = level || Object.fromEntries(ORDER.map((c) => [c, { ...START }]));
-  return { id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), start, level: lv, v: 2 };
+  return { id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), start, level: lv, v: 3 };
 }
 
 function setDone(ex) { return ex.sets.length >= ex.nSets && ex.sets.every((r) => r >= ex.target); }
@@ -41,20 +45,20 @@ export function weekSuccess(state, cycle, week, c) {
 /** Niveau (séries × répétitions) d'une couleur au début de la semaine `week` (1 à 4, 5 = début du cycle suivant).
  *  project = semaine à partir de laquelle on suppose les séances réussies (aperçu du plan). */
 export function levelAt(state, cycle, week, c, project = Infinity) {
-  const inc = step(state.profile), cap = testCap(state, c);
-  let l = { ...cycle.level[c] };
+  const inc = step(state.profile);
+  let l = { lvl: 1, ...cycle.level[c] };
   for (let w = 1; w < Math.min(week, CYCLE_WEEKS); w++) {
     const ok = w >= project || weekSuccess(state, cycle, w, c);
     if (!ok) continue;
     const n = nextLevel(l, inc);
-    if (n.sets > l.sets || n.reps <= cap) l = n;
+    if (n.lvl > l.lvl || n.sets > l.sets || n.reps <= testCap(state, c, l.lvl)) l = n;
   }
   return l;
 }
 /** Cible d'une semaine. Semaine 4 allégée : 2 séries, environ 30 % de volume en moins. */
 export function target(state, cycle, week, c, project) {
   const l = levelAt(state, cycle, week, c, project);
-  if (week >= CYCLE_WEEKS) return l.sets >= 3 ? { reps: l.reps, sets: 2, deload: true } : { reps: Math.max(5, Math.round(l.reps * 0.7)), sets: 2, deload: true };
+  if (week >= CYCLE_WEEKS) return l.sets >= 3 ? { reps: l.reps, sets: 2, lvl: l.lvl, deload: true } : { reps: Math.max(5, Math.round(l.reps * 0.7)), sets: 2, lvl: l.lvl, deload: true };
   return { ...l, deload: false };
 }
 
