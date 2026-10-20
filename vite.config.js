@@ -12,7 +12,7 @@ function serviceWorker() {
     name: 'pp-sw', apply: 'build',
     generateBundle(_, bundle) {
       const files = [...Object.keys(bundle), ...listPublic('public')].filter((f) => !f.endsWith('.map'));
-      const hash = createHash('sha256').update('rev-2');
+      const hash = createHash('sha256').update('rev-3');
       for (const f of Object.keys(bundle).sort()) { const b = bundle[f]; hash.update(f + (b.code || b.source || '')); }
       const v = hash.digest('hex').slice(0, 10);
       const urls = ['', ...files.filter((f) => f !== 'index.html')].map((f) => BASE + f);
